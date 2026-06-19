@@ -7,8 +7,9 @@ from enum import Enum
 import asyncio
 from flask import Flask
 from threading import Thread
+import io
 
-# --- KART ÜRETİM MANTIĞI (cc_creator.py'den aktarıldı) ---
+# --- KART ÜRETİM MANTIĞI ---
 
 class Card(Enum):
     Visa = 0
@@ -61,8 +62,6 @@ async def get_bin_info_async(card_number):
 
     try:
         url = f"https://binlist.io/lookup/{bin6}/"
-        # Not: requests senkron bir kütüphanedir, botu bloklamamak için küçük bir bekleme veya async bir kütüphane tercih edilebilir.
-        # Ancak basitlik adına burada requests kullanmaya devam ediyoruz, ancak bir loop içinde çalıştıracağız.
         loop = asyncio.get_event_loop()
         resp = await loop.run_in_executor(None, lambda: _session.get(url, timeout=5))
         
@@ -98,34 +97,57 @@ async def on_ready():
 @bot.command()
 async def gen(ctx, card_type: str = None, count: int = 1):
     if card_type is None or card_type.lower() not in ["visa", "master"]:
-        await ctx.send("❌ Lütfen geçerli bir kart tipi belirtin: `!gen visa 5` veya `!gen master 5`")
+        await ctx.send("❌ Lütfen geçerli bir kart tipi belirtin: `!gen visa 5` veya `!gen master 5`", delete_after=10)
         return
 
-    if count > 20:
-        await ctx.send("⚠️ Tek seferde en fazla 20 kart üretebilirsiniz.")
-        count = 20
+    # Limitler
+    if count > 100:
+        await ctx.send("⚠️ Tek seferde en fazla 100 kart üretebilirsiniz.", delete_after=10)
+        count = 100
     
     if count < 1:
         count = 1
 
-    msg = await ctx.send(f"⏳ {count} adet {card_type.upper()} kart üretiliyor...")
-    
+    # Kullanıcıya DM atabiliyor muyuz kontrolü
+    try:
+        await ctx.author.send(f"⏳ **{count}** adet **{card_type.upper()}** kart üretiliyor, lütfen bekleyin...")
+        await ctx.send(f"✅ Talebiniz alındı {ctx.author.mention}, kartları DM kutunuza gönderiyorum!", delete_after=10)
+    except discord.Forbidden:
+        await ctx.send(f"❌ {ctx.author.mention}, DM kutun kapalı! Lütfen DM'lerini açıp tekrar dene.", delete_after=15)
+        return
+
     card_type_enum = Card.Visa if card_type.lower() == "visa" else Card.Mastercard
-    results = []
+    results_text = ""
+    results_list = []
     
     for _ in range(count):
         card_number = genCardNumber(card_type_enum)
         exp_date = generateEXP()
         cvv = generateCVV()
         bin_info = await get_bin_info_async(card_number)
-        results.append(f"`{card_number}|{exp_date}|{cvv}` - {bin_info}")
-        await asyncio.sleep(0.1) # Rate limit koruması için küçük bir bekleme
+        line = f"{card_number}|{exp_date}|{cvv} - {bin_info}"
+        results_list.append(line)
+        results_text += line + "\n"
+        if count <= 10: # Eğer az sayıdaysa küçük bir bekleme, çoksa hızlı üretim
+            await asyncio.sleep(0.1)
 
-    response_text = "\n".join(results)
-    embed = discord.Embed(title=f"✅ {card_type.upper()} Kartlar Üretildi", description=response_text, color=discord.Color.green())
-    embed.set_footer(text=f"Talep eden: {ctx.author.name}", icon_url=ctx.author.display_avatar.url)
+    # TXT Dosyası Oluşturma
+    file_content = "\n".join(results_list)
+    file_buffer = io.BytesIO(file_content.encode('utf-8'))
+    discord_file = discord.File(fp=file_buffer, filename=f"kartlar_{card_type}_{count}.txt")
+
+    # DM Gönderimi
+    embed = discord.Embed(title=f"✅ {card_type.upper()} Kartlar Üretildi", color=discord.Color.green())
     
-    await msg.edit(content=None, embed=embed)
+    # Eğer kart sayısı azsa mesajın içine de yazalım
+    if count <= 15:
+        embed.description = f"```\n{results_text}```"
+    else:
+        embed.description = f"**{count}** adet kart üretildi. Tüm liste aşağıdaki .txt dosyasındadır."
+
+    embed.set_footer(text="Discord CC Creator Bot")
+    
+    await ctx.author.send(embed=embed, file=discord_file)
 
 # --- WEB SUNUCUSU (Render Ping İçin) ---
 
