@@ -63,7 +63,7 @@ async def get_bin_info_async(card_number):
     try:
         url = f"https://binlist.io/lookup/{bin6}/"
         loop = asyncio.get_event_loop()
-        resp = await loop.run_in_executor(None, lambda: _session.get(url, timeout=5))
+        resp = await loop.run_in_executor(None, lambda: _session.get(url, timeout=2)) # Timeout düşürüldü
         
         if resp.status_code == 200:
             data = resp.json()
@@ -100,52 +100,68 @@ async def gen(ctx, card_type: str = None, count: int = 1):
         await ctx.send("❌ Lütfen geçerli bir kart tipi belirtin: `!gen visa 5` veya `!gen master 5`", delete_after=10)
         return
 
-    # Limitler
-    if count > 100:
-        await ctx.send("⚠️ Tek seferde en fazla 100 kart üretebilirsiniz.", delete_after=10)
-        count = 100
+    # Limit 1 Milyon
+    if count > 1000000:
+        await ctx.send("⚠️ Tek seferde en fazla 1.000.000 kart üretebilirsiniz.", delete_after=10)
+        count = 1000000
     
     if count < 1:
         count = 1
 
-    # Kullanıcıya DM atabiliyor muyuz kontrolü
     try:
-        await ctx.author.send(f"⏳ **{count}** adet **{card_type.upper()}** kart üretiliyor, lütfen bekleyin...")
+        await ctx.author.send(f"⏳ **{count:,}** adet **{card_type.upper()}** kart üretiliyor, lütfen bekleyin...")
         await ctx.send(f"✅ Talebiniz alındı {ctx.author.mention}, kartları DM kutunuza gönderiyorum!", delete_after=10)
     except discord.Forbidden:
         await ctx.send(f"❌ {ctx.author.mention}, DM kutun kapalı! Lütfen DM'lerini açıp tekrar dene.", delete_after=15)
         return
 
     card_type_enum = Card.Visa if card_type.lower() == "visa" else Card.Mastercard
-    results_text = ""
     results_list = []
     
-    for _ in range(count):
+    # Reklam Metni
+    header = "========================================\n"
+    header += "MADE BY ZADREX\n"
+    header += "Discord: https://discord.gg/ty2w9dUd3K\n"
+    header += "========================================\n\n"
+    
+    footer = "\n========================================\n"
+    footer += "MADE BY ZADREX\n"
+    footer += "Discord: https://discord.gg/ty2w9dUd3K\n"
+    footer += "========================================\n"
+
+    # Hızlı Üretim Döngüsü
+    for i in range(count):
         card_number = genCardNumber(card_type_enum)
         exp_date = generateEXP()
         cvv = generateCVV()
-        bin_info = await get_bin_info_async(card_number)
-        line = f"{card_number}|{exp_date}|{cvv} - {bin_info}"
+        
+        # Eğer sayı çok fazlaysa BIN sorgusunu atla (Performans için)
+        if count <= 100:
+            bin_info = await get_bin_info_async(card_number)
+            line = f"{card_number}|{exp_date}|{cvv} - {bin_info}"
+        else:
+            line = f"{card_number}|{exp_date}|{cvv}"
+            
         results_list.append(line)
-        results_text += line + "\n"
-        if count <= 10: # Eğer az sayıdaysa küçük bir bekleme, çoksa hızlı üretim
+        
+        # Her 10.000 kartta bir küçük bir nefes al (Botun donmaması için)
+        if i % 10000 == 0 and i > 0:
             await asyncio.sleep(0.1)
 
     # TXT Dosyası Oluşturma
-    file_content = "\n".join(results_list)
+    file_content = header + "\n".join(results_list) + footer
     file_buffer = io.BytesIO(file_content.encode('utf-8'))
-    discord_file = discord.File(fp=file_buffer, filename=f"kartlar_{card_type}_{count}.txt")
+    discord_file = discord.File(fp=file_buffer, filename=f"zadrex_cards_{card_type}_{count}.txt")
 
     # DM Gönderimi
-    embed = discord.Embed(title=f"✅ {card_type.upper()} Kartlar Üretildi", color=discord.Color.green())
+    embed = discord.Embed(title=f"✅ {card_type.upper()} Kartlar Üretildi", color=discord.Color.blue())
     
-    # Eğer kart sayısı azsa mesajın içine de yazalım
     if count <= 15:
-        embed.description = f"```\n{results_text}```"
+        embed.description = f"```\n" + "\n".join(results_list) + "```"
     else:
-        embed.description = f"**{count}** adet kart üretildi. Tüm liste aşağıdaki .txt dosyasındadır."
+        embed.description = f"**{count:,}** adet kart üretildi.\n\n**Made by zadrex**\nDiscord: https://discord.gg/ty2w9dUd3K"
 
-    embed.set_footer(text="Discord CC Creator Bot")
+    embed.set_footer(text="Zadrex CC Creator | 1M Limit")
     
     await ctx.author.send(embed=embed, file=discord_file)
 
